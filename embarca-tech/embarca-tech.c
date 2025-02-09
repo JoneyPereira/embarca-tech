@@ -1,148 +1,97 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
+#include "pico/cyw43_arch.h"
+#include "httpd.h" // Biblioteca para servidor HTTP básico
 
 // Definição dos pinos
-#define CHAVE_MODOS 9  // Chave de três posições conectada a este pino
-#define BOTAO_LIGAR 2
-#define BOTAO_DESLIGAR 3
+#define RELÉ_MOTOR 8
 #define LED_LIGADO 4
 #define LED_DESLIGADO 5
-#define SENSOR_CAIXA_CHEIA 6
-#define SENSOR_CAIXA_VAZIA 7
-#define RELÉ_MOTOR 8
-#define SENSOR_TERMICO 28
 
-// Estados do sistema
-typedef enum {
-    DESLIGADO,
-    MODO_MANUAL,
-    MODO_AUTOMATICO
-} modo_t;
+// Estado do motor
+bool motor_ligado = false;
 
-modo_t modo_atual = DESLIGADO;
-
-// Função para inicializar os pinos
-void inicializar_pinos() {
-    gpio_init(CHAVE_MODOS);
-    gpio_set_dir(CHAVE_MODOS, GPIO_IN);
-    gpio_pull_up(CHAVE_MODOS);
-
-    gpio_init(BOTAO_LIGAR);
-    gpio_set_dir(BOTAO_LIGAR, GPIO_IN);
-    gpio_pull_up(BOTAO_LIGAR);
-
-    gpio_init(BOTAO_DESLIGAR);
-    gpio_set_dir(BOTAO_DESLIGAR, GPIO_IN);
-    gpio_pull_up(BOTAO_DESLIGAR);
-
-    gpio_init(LED_LIGADO);
-    gpio_set_dir(LED_LIGADO, GPIO_OUT);
-
-    gpio_init(LED_DESLIGADO);
-    gpio_set_dir(LED_DESLIGADO, GPIO_OUT);
-
-    gpio_init(SENSOR_CAIXA_CHEIA);
-    gpio_set_dir(SENSOR_CAIXA_CHEIA, GPIO_IN);
-    gpio_pull_up(SENSOR_CAIXA_CHEIA);
-
-    gpio_init(SENSOR_CAIXA_VAZIA);
-    gpio_set_dir(SENSOR_CAIXA_VAZIA, GPIO_IN);
-    gpio_pull_up(SENSOR_CAIXA_VAZIA);
-
-    gpio_init(RELÉ_MOTOR);
-    gpio_set_dir(RELÉ_MOTOR, GPIO_OUT);
-
-    gpio_init(SENSOR_TERMICO);
-    gpio_set_dir(SENSOR_TERMICO, GPIO_IN);
+// Função para alternar o estado do motor
+void alterar_estado_motor(bool ligar) {
+    motor_ligado = ligar;
+    gpio_put(RELÉ_MOTOR, ligar);
+    gpio_put(LED_LIGADO, ligar);
+    gpio_put(LED_DESLIGADO, !ligar);
 }
 
-// Função para verificar o estado da chave de modos
-void atualizar_modo() {
-    uint8_t estado_chave = gpio_get(CHAVE_MODOS);
-
-    // Configuração da chave de três posições:
-    // - Posição 0: DESLIGADO
-    // - Posição 1: MODO_MANUAL
-    // - Posição 2: MODO_AUTOMATICO
-    switch (estado_chave) {
-        case 0:
-            modo_atual = DESLIGADO;
-            break;
-        case 1:
-            modo_atual = MODO_MANUAL;
-            break;
-        case 2:
-            modo_atual = MODO_AUTOMATICO;
-            break;
-        default:
-            modo_atual = DESLIGADO;
+// Manipulador para a rota "/motor" (POST)
+void motor_handler(http_request_t *req, http_response_t *res) {
+    if (req->method == HTTP_POST) {
+        // Parse do corpo da requisição (espera um JSON: {"status": "on" ou "off"})
+        if (strstr(req->body, "\"status\": \"on\"")) {
+            alterar_estado_motor(true);
+            http_response_set_body(res, "{\"status\": \"success\", \"message\": \"Motor ligado\"}");
+        } else if (strstr(req->body, "\"status\": \"off\"")) {
+            alterar_estado_motor(false);
+            http_response_set_body(res, "{\"status\": \"success\", \"message\": \"Motor desligado\"}");
+        } else {
+            http_response_set_status(res, 400);
+            http_response_set_body(res, "{\"error\": \"Parâmetro inválido\"}");
+        }
+    } else {
+        http_response_set_status(res, 405);
+        http_response_set_body(res, "{\"error\": \"Método não permitido\"}");
     }
 }
 
-// Função para verificar o estado dos botões no modo manual
-void verificar_modo_manual() {
-    if (gpio_get(BOTAO_LIGAR) == 0) {
-        gpio_put(RELÉ_MOTOR, 1);
-        gpio_put(LED_LIGADO, 1);
-        gpio_put(LED_DESLIGADO, 0);
-    } else if (gpio_get(BOTAO_DESLIGAR) == 0) {
-        gpio_put(RELÉ_MOTOR, 0);
-        gpio_put(LED_LIGADO, 0);
-        gpio_put(LED_DESLIGADO, 1);
-    }
+// Manipulador para a rota "/status" (GET)
+void status_handler(http_request_t *req, http_response_t *res) {
+    char status[128];
+    snprintf(status, sizeof(status), 
+        "{\"motor\": \"%s\"}", motor_ligado ? "on" : "off");
+    http_response_set_body(res, status);
 }
 
-// Função para verificar o estado dos sensores no modo automático
-void verificar_modo_automatico() {
-    if (gpio_get(SENSOR_CAIXA_VAZIA) == 0) {
-        gpio_put(RELÉ_MOTOR, 1);
-        gpio_put(LED_LIGADO, 1);
-        gpio_put(LED_DESLIGADO, 0);
-    } else if (gpio_get(SENSOR_CAIXA_CHEIA) == 0) {
-        gpio_put(RELÉ_MOTOR, 0);
-        gpio_put(LED_LIGADO, 0);
-        gpio_put(LED_DESLIGADO, 1);
-    }
-}
-
-// Função para monitorar a temperatura do motor
-void verificar_temperatura_motor() {
-    if (gpio_get(SENSOR_TERMICO) == 1) {
-        gpio_put(RELÉ_MOTOR, 0);
-        gpio_put(LED_LIGADO, 0);
-        gpio_put(LED_DESLIGADO, 1);
-        printf("Alerta: Motor superaquecido! Motor desligado.\n");
-    }
+// Configuração do servidor HTTP
+void configurar_servidor_http() {
+    httpd_init();
+    httpd_add_route("/motor", HTTP_POST, motor_handler);
+    httpd_add_route("/status", HTTP_GET, status_handler);
+    printf("Servidor HTTP configurado.\n");
 }
 
 int main() {
     stdio_init_all();
-    inicializar_pinos();
 
-    printf("Sistema iniciado.\n");
+    // Inicializar Wi-Fi
+    if (cyw43_arch_init()) {
+        printf("Erro ao inicializar Wi-Fi\n");
+        return -1;
+    }
+    cyw43_arch_enable_sta_mode();
 
+    // Conectar ao Wi-Fi
+    const char *ssid = "SEU_SSID";
+    const char *password = "SUA_SENHA";
+    if (cyw43_arch_wifi_connect_timeout_ms(ssid, password, CYW43_AUTH_WPA2_AES_PSK, 10000)) {
+        printf("Erro ao conectar ao Wi-Fi\n");
+        return -1;
+    }
+    printf("Conectado ao Wi-Fi\n");
+
+    // Configuração dos pinos
+    gpio_init(RELÉ_MOTOR);
+    gpio_set_dir(RELÉ_MOTOR, GPIO_OUT);
+    gpio_init(LED_LIGADO);
+    gpio_set_dir(LED_LIGADO, GPIO_OUT);
+    gpio_init(LED_DESLIGADO);
+    gpio_set_dir(LED_DESLIGADO, GPIO_OUT);
+
+    // Configuração do servidor HTTP
+    configurar_servidor_http();
+
+    // Loop principal
     while (1) {
-        atualizar_modo();
-
-        switch (modo_atual) {
-            case DESLIGADO:
-                gpio_put(RELÉ_MOTOR, 0);
-                gpio_put(LED_LIGADO, 0);
-                gpio_put(LED_DESLIGADO, 1);
-                break;
-
-            case MODO_MANUAL:
-                verificar_modo_manual();
-                break;
-
-            case MODO_AUTOMATICO:
-                verificar_modo_automatico();
-                break;
-        }
-
-        verificar_temperatura_motor();
-        sleep_ms(100);
+        httpd_poll(); // Processa as requisições HTTP
+        sleep_ms(10);
     }
 
+    // Encerrar Wi-Fi
+    cyw43_arch_deinit();
     return 0;
 }
