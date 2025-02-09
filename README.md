@@ -1,14 +1,40 @@
 # embarca-tech
 ```mermaid
-flowchart TD
-    A(Início) --> B[Inicialização dos sensores e periféricos]
-    B --> C[Verificar conexão com a rede]
-    C -->|Conectado| D[Coletar dados do GPS]
-    C -->|Não conectado| E[Tentar reconectar à rede]
-    E --> C
-    D --> F[Enviar dados ao servidor]
-    F --> G[Receber rota otimizada]
-    G --> H[Exibir rota ao usuário]
-    H --> I[Esperar intervalo configurado]
-    I --> D
+graph TD;
+    %% Início do Fluxograma
+    A[Início] --> B[Inicializa GPIOs e Wi-Fi]
+    B --> C[Verifica posição da chave]
+    
+    %% Decisão sobre o modo de operação
+    C -->|Modo Desligado| D[Motor Desligado]
+    D --> F[Exibir status no servidor] --> Z[Fim]
+
+    C -->|Modo Manual| E[Verifica botões]
+    
+    %% Controle Manual
+    E -->|Botão Ligar Pressionado| G[Liga Motor]
+    G --> H[Atualiza LEDs] --> F
+    
+    E -->|Botão Desligar Pressionado| I[Desliga Motor]
+    I --> J[Atualiza LEDs] --> F
+
+    C -->|Modo Automático| K[Verifica Sensores]
+
+    %% Controle Automático
+    K -->|Caixa Vazia| L[Liga Motor]
+    L --> M[Atualiza LEDs] --> F
+    
+    K -->|Caixa Cheia| N[Desliga Motor]
+    N --> O[Atualiza LEDs] --> F
+    
+    %% Verificação de Superaquecimento
+    F --> P[Verifica Sensor Térmico]
+    P -->|Motor Superaquecendo| Q[Desliga Motor por segurança]
+    Q --> O
+
+    %% Loop contínuo
+    F --> C
+
+    %% Fim do Fluxograma
+    Z
 ```
